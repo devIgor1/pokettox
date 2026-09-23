@@ -6,7 +6,7 @@ export function parseServices(input:unknown) { const results=z.array(serviceSche
 export async function calculateFreight(cep:string,declaredValue:number) {
   const config=shippingConfig(); if(!config.ready)throw new AppError("O frete ainda não foi configurado pela loja. Suas cartas podem ser guardadas no cofre enquanto isso.",503);
   const request=async(insured:boolean)=>{
-    const response=await fetch("https://api.superfrete.com/api/v0/calculator",{method:"POST",headers:{Authorization:`Bearer ${config.token}`,"User-Agent":`PokeCofre/1.0 (${config.contact})`,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({from:{postal_code:config.origin},to:{postal_code:cep},services:"1,2",options:{own_hand:false,receipt:false,insurance_value:insured?declaredValue:0,use_insurance_value:insured},package:config.parcel}),signal:AbortSignal.timeout(18000)});
+    const response=await fetch("https://api.superfrete.com/api/v0/calculator",{method:"POST",headers:{Authorization:`Bearer ${config.token}`,"User-Agent":`PokeCofre/1.0 (${config.contact || "+https://poke-cofre-cartas.igormraesmm.chatgpt.site"})`,Accept:"application/json","Content-Type":"application/json"},body:JSON.stringify({from:{postal_code:config.origin},to:{postal_code:cep},services:"1,2",options:{own_hand:false,receipt:false,insurance_value:insured?declaredValue:0,use_insurance_value:insured},package:config.parcel}),signal:AbortSignal.timeout(18000)});
     if(!response.ok)throw new AppError("Não foi possível consultar a transportadora agora. Tente novamente.",502);
     return parseServices(await response.json());
   };

@@ -2,14 +2,14 @@
 
 Aplicação em português para registrar cartas no cofre e solicitar envios por PAC/SEDEX. Os dados ficam no banco D1. A cotação usa a API real do SuperFrete, sem preços de demonstração.
 
-## Configuração pendente
+## Configuração
 
 Configure as seguintes variáveis no ambiente do Site e publique novamente. Não coloque tokens no navegador, no Git ou neste documento.
 
 | Variável | Conteúdo |
 | --- | --- |
 | SUPERFRETE_TOKEN | Token de produção, armazenado como segredo |
-| SUPERFRETE_CONTACT_EMAIL | E-mail de contato técnico exigido pelo SuperFrete |
+| SUPERFRETE_CONTACT_EMAIL | Opcional. Sem e-mail, o User-Agent identifica o site por sua URL |
 | ORIGIN_CEP | CEP de onde as cartas serão postadas, 8 dígitos |
 | PACKAGE_WEIGHT_KG | Peso da embalagem padrão, em kg, com ponto decimal |
 | PACKAGE_HEIGHT_CM | Altura da embalagem, em cm |
@@ -18,7 +18,7 @@ Configure as seguintes variáveis no ambiente do Site e publique novamente. Não
 | PAYMENT_INSTRUCTIONS | Instruções reais de pagamento; por padrão a equipe contata o cliente |
 | ADMIN_EMAILS | E-mails permitidos na equipe, separados por vírgulas, após login pelo ChatGPT |
 
-O proprietário já está na lista de acesso da equipe. O Site é publicado com acesso privado. Para clientes externos usarem, a política de compartilhamento precisa ser alterada explicitamente pelo proprietário.
+O proprietário está na lista de acesso da equipe. O Site tem acesso público autorizado pelo proprietário; a área da equipe permanece restrita. A origem está configurada como 02335-090, com embalagem de 6 cm de altura × 11 cm de largura × 16 cm de comprimento e peso de 0,300 kg. O token fica no ambiente de produção como segredo.
 
 ## Cálculo do seguro
 
@@ -52,4 +52,4 @@ Dados do cliente não são persistidos no armazenamento do navegador. Endpoints 
 - [ViaCEP](https://viacep.com.br/)
 - Arte do Pikachu: [PokeAPI, arte oficial](https://github.com/PokeAPI/sprites/blob/master/sprites/pokemon/other/official-artwork/25.png). Pokémon e personagens pertencem aos respectivos titulares. A página não implica vínculo oficial.
 
-Sem token e configuração do pacote, o caminho do cofre funciona e o frete permanece indisponível. A integração com o SuperFrete precisa de um teste real depois da configuração da conta.
+Sem token e configuração do pacote, o caminho do cofre funciona e o frete permanece indisponível. Em 23/09/2026, a API de produção respondeu com sucesso para PAC e SEDEX, com e sem seguro, identificando a aplicação pela URL do site e sem e-mail.

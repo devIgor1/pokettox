@@ -8,7 +8,7 @@ export function setting(name:string) { return process.env[name]?.trim() || ""; }
 export function shippingConfig() {
   const token=setting("SUPERFRETE_TOKEN"), origin=digits(setting("ORIGIN_CEP")), contact=setting("SUPERFRETE_CONTACT_EMAIL");
   const parcel={weight:Number(setting("PACKAGE_WEIGHT_KG")), height:Number(setting("PACKAGE_HEIGHT_CM")), width:Number(setting("PACKAGE_WIDTH_CM")), length:Number(setting("PACKAGE_LENGTH_CM"))};
-  const ready=Boolean(token && origin.length===8 && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact) && Object.values(parcel).every(v=>Number.isFinite(v)&&v>0));
+  const ready=Boolean(token && origin.length===8 && Object.values(parcel).every(v=>Number.isFinite(v)&&v>0));
   return {token,origin,contact,parcel,ready};
 }
 export async function requireStaff() {
