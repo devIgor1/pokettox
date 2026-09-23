@@ -1,18 +1,23 @@
 // Local-only integration check. Never targets the hosted site. Fixtures are removed by exact IDs.
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
+import {hashPassword} from '../lib/password.ts';
 const origin='http://localhost:5173';
 const customer={name:'QA local — teste automatizado',cpf:'52998224725',phone:'11999990000',cep:'01001000',street:'Praça da Sé',number:'1',complement:'',district:'Sé',city:'São Paulo',state:'SP'};
 const keys=[],quoteIds=[],created=[];
 const owner=crypto.randomUUID();
+const adminId=`qa-ops-${crypto.randomUUID()}`,adminEmail=`${adminId}@example.test`,adminPassword='Senha exclusiva do teste de pedidos!';
 function sql(statement){const result=spawnSync(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local','--config','dist/server/wrangler.json','--persist-to','.wrangler/state','--command',statement],{encoding:'utf8'});if(result.status!==0)throw new Error(result.stderr);}
 async function post(path,body,extra={}){const res=await fetch(origin+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,...extra},body:JSON.stringify(body)});return {status:res.status,data:await res.json()};}
 try {
   assert.equal((await fetch(origin+'/api/staff/orders')).status,401);
   assert.equal((await fetch(origin+'/api/staff/spreadsheet')).status,401);
-  const signin=await fetch(origin+'/signin-with-chatgpt?return_to=/equipe',{redirect:'manual'});
+  const passwordHash=await hashPassword(adminPassword);
+  sql(`INSERT INTO admin_accounts (id,email,password_hash,recovery_hash,active,version,created_at) VALUES ('${adminId}','${adminEmail}','${passwordHash}','fixture-unused',1,1,${Date.now()})`);
+  const signin=await fetch(origin+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({email:adminEmail,password:adminPassword})});
+  assert.equal(signin.status,200);
   const auth=signin.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');
-  assert.ok(auth,'Local development sign-in cookie required');
+  assert.ok(auth,'Local password sign-in cookie required');
   assert.equal((await fetch(origin+'/api/staff/orders',{headers:{Cookie:auth}})).status,200);
   const key=crypto.randomUUID();keys.push(key);
   const bad=await post('/api/orders',{customer:{...customer,cpf:'11111111111'},mode:'vault'},{'Idempotency-Key':crypto.randomUUID()});assert.equal(bad.status,400);
@@ -37,4 +42,5 @@ try {
 }finally{
   for(const key of keys)sql(`DELETE FROM orders WHERE idempotency_key='${key}' AND json_extract(customer,'$.name')='QA local — teste automatizado'`);
   for(const id of quoteIds)sql(`DELETE FROM quotes WHERE id='${id}' AND owner='${owner}'`);
+  sql(`DELETE FROM admin_sessions WHERE admin_id='${adminId}'; DELETE FROM admin_accounts WHERE id='${adminId}' AND email='${adminEmail}';`);
 }

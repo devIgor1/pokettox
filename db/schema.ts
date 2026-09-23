@@ -13,3 +13,14 @@ export const orders = sqliteTable("orders", {
   paidAt:integer("paid_at"), paidBy:text("paid_by"),
 }, table => [index("orders_status_created").on(table.status,table.createdAt)]);
 export const requestLimits = sqliteTable("request_limits", { key:text("key").primaryKey(), count:integer("count").notNull(), expiresAt:integer("expires_at").notNull() });
+
+export const adminAccounts = sqliteTable("admin_accounts", {
+  id: text("id").primaryKey(), email: text("email").notNull().unique(),
+  passwordHash: text("password_hash").notNull(), recoveryHash: text("recovery_hash").notNull(),
+  active: integer("active").notNull().default(1), version: integer("version").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+});
+export const adminSessions = sqliteTable("admin_sessions", {
+  tokenHash: text("token_hash").primaryKey(), adminId: text("admin_id").notNull().references(() => adminAccounts.id),
+  version: integer("version").notNull(), expiresAt: integer("expires_at").notNull(),
+}, table => [index("admin_sessions_expiry").on(table.expiresAt)]);

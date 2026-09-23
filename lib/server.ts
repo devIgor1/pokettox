@@ -1,5 +1,5 @@
 import { env } from "cloudflare:workers";
-import { getChatGPTUser } from "@/app/chatgpt-auth";
+import { getAdmin } from "./admin-auth";
 import { z } from "zod";
 import { digits, validCpf } from "./domain";
 export class AppError extends Error { constructor(message:string, public status=400){ super(message); } }
@@ -12,10 +12,8 @@ export function shippingConfig() {
   return {token,origin,contact,parcel,ready};
 }
 export async function requireStaff() {
-  const user=await getChatGPTUser();
-  const allowed=setting("ADMIN_EMAILS").toLowerCase().split(",").map(s=>s.trim()).filter(Boolean);
-  if(!user) throw new AppError("Entre com sua conta para acessar a equipe.",401);
-  if(!allowed.includes(user.email.toLowerCase())) throw new AppError("Esta conta não tem acesso à área da equipe.",403);
+  const user=await getAdmin();
+  if(!user) throw new AppError("Entre com seu e-mail e senha para acessar a equipe.",401);
   return user;
 }
 export function json(data:unknown,status=200) { return Response.json(data,{status,headers:{"Cache-Control":"no-store","X-Content-Type-Options":"nosniff"}}); }

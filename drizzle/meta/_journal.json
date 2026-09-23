@@ -8,6 +8,13 @@
       "when": 1790178573353,
       "tag": "0000_perfect_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1790187847874,
+      "tag": "0001_daffy_rockslide",
+      "breakpoints": true
     }
   ]
 }
