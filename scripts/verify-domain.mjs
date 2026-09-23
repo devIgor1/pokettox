@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import {validCpf,totalCents} from '../lib/domain.ts';
+import {paidCsv,csvCell} from '../lib/csv.ts';
+assert.equal(validCpf('529.982.247-25'),true);
+for(const value of ['111.111.111-11','529.982.247-24','','123'])assert.equal(validCpf(value),false);
+assert.equal(totalCents(1861,239),2500);
+assert.equal(totalCents(1000,0),1400);
+assert.throws(()=>totalCents(-1,0));assert.throws(()=>totalCents(10.5,0));
+assert.equal(csvCell('=HYPERLINK("x")'),'"\'=HYPERLINK(""x"")"');
+assert.equal(csvCell('   +1'),'"\'   +1"');
+const csv=paidCsv([{name:'Teste; "Coleção"',phone:'11999990000',service:'PAC'}]);
+assert.ok(csv.startsWith('\uFEFF'));assert.ok(csv.includes('"Teste; ""Coleção"""'));
+assert.ok(csv.includes('"pago / pronto para envio"'));assert.equal(csv.split('\r\n').length,2);
+console.log('PASS: CPF, valores em centavos, taxa de R$ 4,00 e exportação CSV segura.');
