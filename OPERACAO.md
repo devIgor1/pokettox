@@ -16,6 +16,12 @@ Configure as seguintes variáveis no ambiente do Site e publique novamente. Não
 | PACKAGE_WIDTH_CM | Largura, em cm |
 | PACKAGE_LENGTH_CM | Comprimento, em cm |
 | PAYMENT_INSTRUCTIONS | Instruções reais de pagamento; por padrão a equipe contata o cliente |
+| INFINITEPAY_HANDLE | InfiniteTag da loja sem $, atualmente pokettox1 |
+| PUBLIC_SITE_URL | Origem HTTPS oficial, sem barra final; atualizar ao mudar de domínio |
+| SUPERFRETE_AUTO_LABEL | true para emitir a etiqueta após o pagamento confirmado |
+| SHIPPING_DOCUMENT | declaration para a declaração de conteúdo autorizada pela loja |
+| SENDER_NAME / SENDER_STREET / SENDER_NUMBER | Nome e endereço do remetente; armazenados como segredos |
+| SENDER_DISTRICT / SENDER_CITY / SENDER_STATE | Bairro, cidade e UF do remetente |
 | ADMIN_SETUP_TOKEN_HASH | SHA-256 de um convite aleatório de 256 bits para cadastrar o primeiro administrador; segredo |
 | ADMIN_SETUP_EXPIRES_AT | Expiração do convite, em milissegundos Unix |
 
@@ -37,15 +43,29 @@ O endereço dos formulários é relativo ao domínio acessado. Ao conectar domí
 
 O cliente informa o valor declarado das cartas. O servidor consulta PAC e SEDEX com e sem seguro. Seguro = preço segurado − preço sem seguro. Total = frete sem seguro + seguro + R$ 4,00. Não adiciona o valor declarado ao frete, nem cobra o seguro duas vezes. Todos os valores internos são centavos inteiros.
 
-Essa implementação usa o seguro da transportadora. Não existe uma tarifa extra de seguro da loja; se essa for a intenção, defina a regra antes de ativar. A equipe deve conferir o valor declarado e se as medidas padrão servem ao pedido antes de despachar. O sistema não compra etiquetas nem realiza pagamentos.
+Essa implementação usa o seguro da transportadora. Não existe uma tarifa extra de seguro da loja. A equipe deve conferir o valor declarado e se as medidas padrão servem ao pedido antes de despachar. Com a emissão automática configurada, o sistema compra a etiqueta usando o saldo da carteira SuperFrete depois da confirmação do pagamento.
 
 ## Uso diário
 
 1. O cliente preenche nome, CPF, telefone e endereço. O CEP pode preencher o endereço; se a consulta falhar, os campos continuam editáveis.
 2. Cofre: confirmação grava status **no cofre**, sem cotação e sem pagamento.
 3. Envio: cotação real, válida por 15 minutos e vinculada ao CEP e navegador. O cliente revisa o total e confirma. Status inicial: **aguardando pagamento**.
-4. A equipe acessa `/equipe`, verifica o recebimento fora do sistema e confirma o pagamento. Nome do responsável e data são registrados no banco. Confirmar a solicitação como cliente nunca marca pagamento recebido.
+4. O cliente abre **Pagar com PIX ou cartão** e escolhe a modalidade no checkout hospedado da InfinitePay. O QR Code e o copia e cola são apresentados pela InfinitePay. A confirmação validada atualiza o pedido automaticamente e registra InfinitePay, modalidade e data. A equipe ainda pode conferir e confirmar manualmente um recebimento externo. Confirmar a solicitação como cliente nunca marca pagamento recebido.
 5. O botão **Planilha de pagos** baixa um CSV UTF-8 com nome, telefone, PAC/SEDEX e **pago / pronto para envio**. Ele consulta todos os pedidos pagos e se atualiza a cada download, sem incluir cofre nem pedidos pendentes. Abre no Excel e pode ser importado no Google Sheets. Não há sincronização com uma planilha externa enquanto nenhum destino for configurado.
+
+## Pagamentos e etiquetas
+
+A conta recebedora precisa ter PIX e cartão habilitados no Checkout da InfinitePay. O dinheiro do comprador fica nessa conta; não há transferência automática para a carteira SuperFrete. A loja precisa manter saldo suficiente nela.
+
+- O servidor gera o link com valor e recebedor próprios; parâmetros do navegador não alteram esses dados. Cada pedido preserva a conta recebedora usada ao criar o link.
+- O webhook e o retorno são conferidos por payment_check na InfinitePay. Só success=true, paid=true, valor exato do pedido e modalidade PIX/cartão liberam o pedido. O webhook não é considerado prova de pagamento isoladamente; a documentação atual não descreve assinatura dele.
+- A referência e a transação têm unicidade no banco. Notificações repetidas não compram outra etiqueta. A página de retorno não depende do navegador original nem divulga CPF/endereço.
+- A emissão usa a declaração de conteúdo autorizada: um lote de cartas colecionáveis com o valor declarado pelo comprador. Nome, endereço e medidas são copiados ao criar a solicitação. A equipe continua responsável por conferir o conteúdo real do pacote.
+- A compra da etiqueta fica limitada ao frete com seguro originalmente cotado, excluindo os R$ 4,00 de preparação. Aumento de preço, falta de saldo ou dados incompatíveis gera pendência no painel; o pagamento recebido permanece registrado.
+- Se houver erro depois da criação, o ID da etiqueta é reutilizado. O botão **Verificar e emitir etiqueta** consulta o estado na SuperFrete antes de pagar. Se a resposta da criação se perder antes de salvar o ID, o sistema bloqueia nova criação: a equipe deve localizar o protocolo na SuperFrete e concluir por lá, para evitar duplicação.
+- Webhooks com falha de validação retornam 400 para nova tentativa do provedor. A confirmação do pagamento é salva antes da emissão. Uma interrupção durante emissão pode exigir conferência pela equipe; não há fila com execução agendada.
+- Este fluxo cobre aprovação e emissão. Estornos, disputas e cancelamentos são tratados nos painéis dos provedores e conferidos pela equipe; não há automação desses eventos.
+- O checkout público documentado entrega um link, não uma API de QR Code para exibir dentro do formulário. Os dados de cartão ficam exclusivamente no checkout InfinitePay.
 
 ## Desenvolvimento e verificação
 
@@ -55,11 +75,15 @@ Essa implementação usa o seguro da transportadora. Não existe uma tarifa extr
 - `node scripts/verify-domain.mjs`: CPF, cálculo e CSV.
 - `node scripts/verify-auth.mjs`: login, convite de uso único, recuperação, troca de acesso, bloqueios e revogação. Requer banco local migrado sem administrador principal e `.dev.vars` com hash SHA-256 de `t` repetido 43 vezes e expiração futura para o convite de teste. Nunca configure esse convite em produção.
 - `node scripts/verify-api.mjs`: regressão local de pedidos e pagamentos; cria um administrador de teste, entra com senha e remove apenas suas fixtures. Requer D1 migrado. Não executar contra produção.
+- `node scripts/verify-payments.mjs`: rotas reais e SQL em SQLite temporário com todas as chamadas externas simuladas. Cobre PIX/cartão, webhooks falsos, preço/recebedor, idempotência, planilha, saldo insuficiente, teto de compra e reconciliação após falhas. Não realiza cobranças nem compra etiquetas reais.
 - `npm run db:generate`: gerar novas migrações. Nunca editar migrações já publicadas.
 
 Dados do cliente não são persistidos no armazenamento do navegador. Todos os endpoints da equipe verificam a sessão e a conta ativa no servidor. A confirmação e o registro são idempotentes; custos/status enviados pelo cliente não têm autoridade. Chamadas mutáveis conferem origem, JSON e tamanho da requisição. Limites de tentativas protegem cotação e criação de pedidos.
 
 ## Referências
+
+- [InfinitePay: checkout integrado e confirmação](https://www.infinitepay.io/checkout-documentacao)
+- [SuperFrete: emissão usando saldo](https://superfrete.readme.io/reference/apiintegrationv1checkout)
 
 - [OWASP: armazenamento de senhas](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
 - [Cloudflare: suporte a node:crypto](https://developers.cloudflare.com/workers/runtime-apis/nodejs/crypto/)

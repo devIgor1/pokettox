@@ -15,6 +15,13 @@
       "when": 1790187847874,
       "tag": "0001_daffy_rockslide",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1791219479200,
+      "tag": "0002_windy_shen",
+      "breakpoints": true
     }
   ]
 }

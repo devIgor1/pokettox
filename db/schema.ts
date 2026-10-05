@@ -14,6 +14,25 @@ export const orders = sqliteTable("orders", {
 }, table => [index("orders_status_created").on(table.status,table.createdAt)]);
 export const requestLimits = sqliteTable("request_limits", { key:text("key").primaryKey(), count:integer("count").notNull(), expiresAt:integer("expires_at").notNull() });
 
+export const orderPayments = sqliteTable("order_payments", {
+  orderId: text("order_id").primaryKey().references(() => orders.id),
+  reference: text("reference").notNull().unique(), handle: text("handle").notNull(),
+  amountCents: integer("amount_cents").notNull(), checkoutUrl: text("checkout_url"),
+  leaseUntil: integer("lease_until").notNull().default(0),
+  transactionNsu: text("transaction_nsu").unique(), invoiceSlug: text("invoice_slug"),
+  captureMethod: text("capture_method"), paidAt: integer("paid_at"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export const shipmentJobs = sqliteTable("shipment_jobs", {
+  orderId: text("order_id").primaryKey().references(() => orders.id),
+  requestJson: text("request_json").notNull(), maxCents: integer("max_cents").notNull(),
+  status: text("status").notNull().default("waiting_payment"),
+  superfreteId: text("superfrete_id").unique(), tracking: text("tracking"), printUrl: text("print_url"),
+  error: text("error"), leaseUntil: integer("lease_until").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});
+
 export const adminAccounts = sqliteTable("admin_accounts", {
   id: text("id").primaryKey(), email: text("email").notNull().unique(),
   passwordHash: text("password_hash").notNull(), recoveryHash: text("recovery_hash").notNull(),
