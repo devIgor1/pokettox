@@ -6,9 +6,10 @@ export async function GET(req:Request) { try {
   await requireStaff();
   const cursor=Number(new URL(req.url).searchParams.get("before")||Date.now()+1);
   if(!Number.isFinite(cursor))throw new AppError("Página inválida.");
-  const {results}=await db().prepare("SELECT o.id,o.customer,o.mode,o.service,o.total_cents,o.status,o.created_at,o.paid_at,o.paid_by,p.capture_method,s.status AS shipment_status,s.superfrete_id,s.tracking,s.print_url,s.error AS shipment_error FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id LEFT JOIN shipment_jobs s ON s.order_id=o.id WHERE o.created_at < ? ORDER BY o.created_at DESC LIMIT 101").bind(cursor).all<{id:string;customer:string;mode:string;service:string|null;total_cents:number|null;status:string;created_at:number;paid_at:number|null}>();
+  const {results,meta}=await db().prepare("SELECT o.id,o.customer,o.mode,o.service,o.total_cents,o.status,o.created_at,o.paid_at,o.paid_by,p.capture_method,s.status AS shipment_status,s.superfrete_id,s.tracking,s.print_url,s.error AS shipment_error FROM orders o LEFT JOIN order_payments p ON p.order_id=o.id LEFT JOIN shipment_jobs s ON s.order_id=o.id WHERE o.created_at < ? ORDER BY o.created_at DESC LIMIT 101").bind(cursor).all<{id:string;customer:string;mode:string;service:string|null;total_cents:number|null;status:string;created_at:number;paid_at:number|null}>();
   const rows=results.slice(0,100).map(row=>({...row,customer:JSON.parse(row.customer)}));
-  return json({orders:rows,nextCursor:results.length>100?rows.at(-1)?.created_at:null,shippingReady:shippingConfig().ready,paymentReady:paymentConfig().ready,autoLabelReady:shipmentConfig().ready});
+  const storageBytes=typeof meta?.size_after==="number"&&Number.isSafeInteger(meta.size_after)&&meta.size_after>=0?meta.size_after:null;
+  return json({orders:rows,nextCursor:results.length>100?rows.at(-1)?.created_at:null,shippingReady:shippingConfig().ready,paymentReady:paymentConfig().ready,autoLabelReady:shipmentConfig().ready,storageBytes});
 }catch(e){return failure(e);} }
 export async function POST(req:Request) { try {
   const user=await requireStaff();
