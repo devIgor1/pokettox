@@ -40,7 +40,7 @@ async function freightRequest(path: string, body?: unknown) {
   const response = await fetch(`https://api.superfrete.com/api/v0/${path}`, {
     method: body ? "POST" : "GET", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/json",
       Accept: "application/json", "User-Agent": `PokeCofre/1.0 (${config.contact || setting("PUBLIC_SITE_URL")})` },
-    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(10000), redirect: "error",
+    body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(10000), redirect: "manual",
   });
   if (!response.ok) throw new FreightResponseError("Confira o saldo, os limites e os dados da etiqueta no painel SuperFrete.");
   const reader = response.body?.getReader(); if (!reader) throw new Error("Missing response");

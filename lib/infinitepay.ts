@@ -12,7 +12,8 @@ export class PaymentProviderError extends Error {}
 async function request(path: string, body: object) {
   const response = await fetch(`${api}/${path}`, {
     method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify(body), signal: AbortSignal.timeout(15000), redirect: "error",
+    // workerd supports manual/follow only. Reject 3xx via response.ok below.
+    body: JSON.stringify(body), signal: AbortSignal.timeout(15000), redirect: "manual",
   });
   if (!response.ok) throw new PaymentProviderError("A InfinitePay está indisponível. Tente novamente em instantes.");
   // Bound responses without logging provider payloads or customer details.
