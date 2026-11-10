@@ -68,12 +68,28 @@ A conta recebedora precisa ter PIX e cartão habilitados no Checkout da Infinite
 - Este fluxo cobre aprovação e emissão. Estornos, disputas e cancelamentos são tratados nos painéis dos provedores e conferidos pela equipe; não há automação desses eventos.
 - O checkout público documentado entrega um link, não uma API de QR Code para exibir dentro do formulário. Os dados de cartão ficam exclusivamente no checkout InfinitePay.
 
+## Robô do WhatsApp
+
+O robô (`bot/`) é um processo separado e **sempre ligado**: mantém a conexão com o WhatsApp, publica o que o site coloca na fila (`bot_outbox`) e registra os votos das enquetes. Ele não roda na Vercel (funções serverless encerram a conexão). Site e robô conversam só pelo banco.
+
+- **Número:** use um chip dedicado ao robô (de preferência com WhatsApp Business), com um número reserva. A integração não é oficial (Baileys); existe risco de bloqueio do número. O robô espaça os envios (2–3,5 s entre mensagens) e só responde no privado a quem escreve para ele.
+- **Hospedagem:** qualquer serviço com processo contínuo (Railway, Fly.io, VPS). Imagem: `docker build -f bot/Dockerfile -t pokecofre-bot .`. Variáveis: `DATABASE_URL` (mesma do site, branch correspondente) e, opcional, `LOG_LEVEL` (`warn` por padrão). **Uma única instância** por número.
+- **Sem Docker:** `npm ci && npm run bot:build && DATABASE_URL=... npm run bot:start`.
+- **Conectar o número:** abra **/equipe/robo**, que mostra o QR code. No celular do robô: WhatsApp › Aparelhos conectados › Conectar um aparelho. A sessão fica salva no banco (`bot_auth`), então reiniciar ou reimplantar não pede QR de novo. **Desconectar este número** no painel (ou remover o aparelho no celular) apaga a sessão e mostra um novo QR.
+- **Grupos:** adicione o número do robô ao grupo (primeiro um grupo de teste). A lista é atualizada sozinha; o painel permite enviar mensagem (com opção de marcar todos) e enquete de teste.
+- **Enquetes e votos:** cada enquete é criada com uma chave gerada e guardada pelo site, usada para decifrar os votos. Toda mudança de voto é gravada (`poll_vote_events`), inclusive voto removido, com horário enviado pelo WhatsApp. O primeiro voto de um número cria o perfil do participante automaticamente. Em grupos que escondem o telefone (LID), o número é descoberto pelos dados do grupo e preenchido depois nos votos já gravados.
+- **Confirmação do WhatsApp do participante:** em Minha conta, o participante gera um código e o envia ao robô pelo link do WhatsApp. Receber o código daquele número prova a posse e liga os votos do número à conta (se o robô já tinha criado um perfil por votos, ele é unido à conta e um bloqueio existente continua valendo). Código de 6 dígitos, vale 30 minutos, uso único, 5 tentativas.
+- **Status:** o robô grava um sinal a cada 30 s; o painel avisa quando ele para de responder. Comandos com erro são tentados de novo (até 5 vezes, com espera crescente); uma enquete nunca é publicada duas vezes.
+
 ## Desenvolvimento e verificação
 
 - `npm run dev`: prévia local (http://localhost:3000).
 - `npm run build`: build Next.js (o mesmo que a Vercel executa).
 - `node node_modules/typescript/bin/tsc --noEmit`: tipos.
 - `node scripts/verify-domain.mjs`: CPF, cálculo e CSV.
+- `node scripts/verify-participants.mjs`: contas de participante (`/conta`) e endereços contra Postgres em memória (PGlite): cadastro com termos, CSRF, cookie, login sem enumeração, WhatsApp pendente/verificado, endereço padrão, isolamento entre contas, troca de senha, expiração e limites. Não usa rede nem banco real.
+- `node scripts/verify-bot.mjs`: lógica do robô contra Postgres em memória e um WhatsApp falso, com votos cifrados como os do aplicativo: fila (marcar todos, novas tentativas, lease expirado sem duplicar enquete, deduplicação), votos (número, LID, voto removido, repetição, chave errada), painel `/equipe/robo` e confirmação do WhatsApp (fusão com perfil criado pelo robô, expiração, limite). Não conecta ao WhatsApp.
+- `npm run bot:build` / `npm run bot:start`: compila e roda o robô (`bot/dist/main.mjs`; requer `DATABASE_URL`).
 - `node scripts/verify-auth.mjs`: login, convite de uso único, recuperação, troca de acesso, bloqueios e revogação. Requer banco local migrado sem administrador principal e `.env.local` com hash SHA-256 de `t` repetido 43 vezes e expiração futura para o convite de teste. Nunca configure esse convite em produção. Requer `npm run dev` rodando; usa o mesmo banco do servidor local (`DATABASE_URL` do `.dev.vars`, branch `dev`).
 - `node scripts/verify-api.mjs`: regressão local de pedidos e pagamentos; cria um administrador de teste, entra com senha e remove apenas suas fixtures. Requer banco migrado. Requer `npm run dev` rodando; usa o mesmo banco do servidor local (`DATABASE_URL` do `.dev.vars`, branch `dev`). Não executar contra produção.
 - `node scripts/verify-payments.mjs`: rotas reais, `lib/pg.ts` e o driver do Neon contra um Postgres em memória (PGlite, via `scripts/pglite-neon.mjs`) com todas as chamadas externas simuladas. Cobre PIX/cartão, webhooks falsos, preço/recebedor, idempotência, planilha, saldo insuficiente, teto de compra e reconciliação após falhas. Não realiza cobranças nem compra etiquetas reais.

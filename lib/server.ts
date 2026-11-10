@@ -50,3 +50,11 @@ export const customerSchema=z.object({
   street:required("o endereço"),number:required("o número").max(15),complement:z.string().trim().max(150).default(""),
   district:required("o bairro"),city:required("a cidade"),state:z.enum(["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","PA","PB","PR","PE","PI","RJ","RN","RS","RO","RR","SC","SP","SE","TO"],{errorMap:()=>({message:"Informe uma UF válida."})}),
 });
+/** State-changing requests must come from this site (CSRF). Unlike readBody, a missing Origin is rejected. */
+export function sameOrigin(req:Request) { if(req.headers.get("origin")!==new URL(req.url).origin) throw new AppError("Origem da solicitação inválida.",403); }
+/** Rate limit by an arbitrary key (e.g. an e-mail), independent of the caller's IP. */
+export async function keyLimit(scope:string, max:number) {
+  const window=Math.floor(Date.now()/900000), key=await hash(`key:${scope}:${window}`);
+  const row=await db().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=request_limits.count+1 RETURNING count").bind(key,(window+1)*900000).first<{count:number}>();
+  if(row && row.count>max) throw new AppError("Muitas tentativas. Aguarde 15 minutos e tente novamente.",429);
+}

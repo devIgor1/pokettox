@@ -46,3 +46,6 @@ next-env.d.ts
 /.codex/
 /outputs/
 /work/
+
+# WhatsApp bot worker build
+/bot/dist/

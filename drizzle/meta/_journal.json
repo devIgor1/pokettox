@@ -8,6 +8,20 @@
       "when": 1794330779349,
       "tag": "0000_init_postgres",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1794337570867,
+      "tag": "0001_participants",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794338464779,
+      "tag": "0002_bot",
+      "breakpoints": true
     }
   ]
 }
