@@ -1,13 +1,14 @@
 # PokéCofre — operação
 
-Aplicação em português para registrar cartas no cofre e solicitar envios por PAC/SEDEX. Os dados ficam no banco D1. A cotação usa a API real do SuperFrete, sem preços de demonstração.
+Aplicação em português para registrar cartas no cofre e solicitar envios por PAC/SEDEX. Os dados ficam no Postgres do Neon (projeto pokecofre: branch `production` para o site publicado, branch `dev` para desenvolvimento local). A cotação usa a API real do SuperFrete, sem preços de demonstração.
 
 ## Configuração
 
-Configure as seguintes variáveis no ambiente do Site e publique novamente. Não coloque tokens no navegador, no Git ou neste documento.
+Configure as seguintes variáveis no projeto da Vercel (**Settings → Environment Variables**, ambiente Production) e faça um novo deploy. Não coloque tokens no navegador, no Git ou neste documento.
 
 | Variável | Conteúdo |
 | --- | --- |
+| DATABASE_URL | Connection string **pooled** (host com `-pooler`) do branch `production` do Neon; segredo |
 | SUPERFRETE_TOKEN | Token de produção, armazenado como segredo |
 | SUPERFRETE_CONTACT_EMAIL | Opcional. Sem e-mail, o User-Agent identifica o site por sua URL |
 | ORIGIN_CEP | CEP de onde as cartas serão postadas, 8 dígitos |
@@ -25,7 +26,7 @@ Configure as seguintes variáveis no ambiente do Site e publique novamente. Não
 | ADMIN_SETUP_TOKEN_HASH | SHA-256 de um convite aleatório de 256 bits para cadastrar o primeiro administrador; segredo |
 | ADMIN_SETUP_EXPIRES_AT | Expiração do convite, em milissegundos Unix |
 
-O Site tem acesso público autorizado pelo proprietário; a área da equipe usa e-mail e senha próprios. O login do ChatGPT e a antiga variável ADMIN_EMAILS não concedem acesso administrativo. A origem está configurada como 02335-090, com embalagem de 6 cm de altura × 11 cm de largura × 16 cm de comprimento e peso de 0,300 kg. O token do SuperFrete fica no ambiente de produção como segredo.
+O site tem acesso público; a área da equipe usa e-mail e senha próprios. A antiga variável ADMIN_EMAILS não concede acesso administrativo. A origem está configurada como 02335-090, com embalagem de 6 cm de altura × 11 cm de largura × 16 cm de comprimento e peso de 0,300 kg. O token do SuperFrete fica no ambiente de produção como segredo.
 
 ## Acesso administrativo
 
@@ -35,7 +36,7 @@ O Site tem acesso público autorizado pelo proprietário; a área da equipe usa 
 4. O login diário é `/equipe/entrar`. Em **Meu acesso**, o administrador pode trocar e-mail ou senha confirmando a senha atual. A troca encerra as outras sessões. **Sair** revoga a sessão no servidor.
 5. Senhas usam scrypt com salt individual (N=32768, r=8, p=3). Sessões aleatórias de 256 bits são armazenadas por hash, expiram em 8 horas e usam cookie `__Host-`, Secure, HttpOnly e SameSite=Strict em produção. O cookie local de desenvolvimento nunca é aceito no build de produção. Tentativas são limitadas por IP e por e-mail.
 
-Não existe cadastro público de administrador. Se o convite vencer antes do primeiro cadastro, gere um novo token e substitua as duas variáveis de configuração, publicando novamente. Depois de criado o administrador, trocar essas variáveis não cria outra conta nem redefine a senha. Para perda de senha, use o código de recuperação; não há envio automático de e-mail. Perder senha e código exige intervenção do responsável pela hospedagem.
+Não existe cadastro público de administrador. Se o convite vencer antes do primeiro cadastro, gere um novo token e substitua as duas variáveis de configuração na Vercel e faça um novo deploy. Depois de criado o administrador, trocar essas variáveis não cria outra conta nem redefine a senha. Para perda de senha, use o código de recuperação; não há envio automático de e-mail. Perder senha e código exige intervenção do responsável pela hospedagem.
 
 O endereço dos formulários é relativo ao domínio acessado. Ao conectar domínio próprio, verifique login e cookies nesse domínio; sessões de outro domínio não são compartilhadas.
 
@@ -69,15 +70,15 @@ A conta recebedora precisa ter PIX e cartão habilitados no Checkout da Infinite
 
 ## Desenvolvimento e verificação
 
-- `npm run dev`: prévia local.
-- `npm run build`: build Vinext/Cloudflare.
+- `npm run dev`: prévia local (http://localhost:3000).
+- `npm run build`: build Next.js (o mesmo que a Vercel executa).
 - `node node_modules/typescript/bin/tsc --noEmit`: tipos.
 - `node scripts/verify-domain.mjs`: CPF, cálculo e CSV.
-- `node scripts/verify-auth.mjs`: login, convite de uso único, recuperação, troca de acesso, bloqueios e revogação. Requer banco local migrado sem administrador principal e `.dev.vars` com hash SHA-256 de `t` repetido 43 vezes e expiração futura para o convite de teste. Nunca configure esse convite em produção.
-- `node scripts/verify-api.mjs`: regressão local de pedidos e pagamentos; cria um administrador de teste, entra com senha e remove apenas suas fixtures. Requer D1 migrado. Não executar contra produção.
-- `node scripts/verify-payments.mjs`: rotas reais e SQL em SQLite temporário com todas as chamadas externas simuladas. Cobre PIX/cartão, webhooks falsos, preço/recebedor, idempotência, planilha, saldo insuficiente, teto de compra e reconciliação após falhas. Não realiza cobranças nem compra etiquetas reais.
-- `node scripts/verify-payment-runtime.mjs`: usa workerd e D1 local para validar compatibilidade das chamadas de checkout, confirmação e emissão, incluindo bloqueio de redirecionamentos. Todas as saídas de rede são simuladas. Reproduz a regressão de `redirect: error`, opção não aceita pelo runtime usado na hospedagem.
-- `npm run db:generate`: gerar novas migrações. Nunca editar migrações já publicadas.
+- `node scripts/verify-auth.mjs`: login, convite de uso único, recuperação, troca de acesso, bloqueios e revogação. Requer banco local migrado sem administrador principal e `.env.local` com hash SHA-256 de `t` repetido 43 vezes e expiração futura para o convite de teste. Nunca configure esse convite em produção. Requer `npm run dev` rodando; usa o mesmo banco do servidor local (`DATABASE_URL` do `.dev.vars`, branch `dev`).
+- `node scripts/verify-api.mjs`: regressão local de pedidos e pagamentos; cria um administrador de teste, entra com senha e remove apenas suas fixtures. Requer banco migrado. Requer `npm run dev` rodando; usa o mesmo banco do servidor local (`DATABASE_URL` do `.dev.vars`, branch `dev`). Não executar contra produção.
+- `node scripts/verify-payments.mjs`: rotas reais, `lib/pg.ts` e o driver do Neon contra um Postgres em memória (PGlite, via `scripts/pglite-neon.mjs`) com todas as chamadas externas simuladas. Cobre PIX/cartão, webhooks falsos, preço/recebedor, idempotência, planilha, saldo insuficiente, teto de compra e reconciliação após falhas. Não realiza cobranças nem compra etiquetas reais.
+- `npm run db:generate`: gerar novas migrações a partir de `db/schema.ts`. Nunca editar migrações já publicadas.
+- `npm run db:migrate`: aplica as migrações no banco de `DATABASE_URL_UNPOOLED` (URL **direta**, sem `-pooler`). Localmente vem do `.env` (branch `dev`). Para produção: `DATABASE_URL_UNPOOLED="<url direta do branch production>" npm run db:migrate`, antes de publicar o código novo.
 
 Dados do cliente não são persistidos no armazenamento do navegador. Todos os endpoints da equipe verificam a sessão e a conta ativa no servidor. A confirmação e o registro são idempotentes; custos/status enviados pelo cliente não têm autoridade. Chamadas mutáveis conferem origem, JSON e tamanho da requisição. Limites de tentativas protegem cotação e criação de pedidos.
 
@@ -87,7 +88,6 @@ Dados do cliente não são persistidos no armazenamento do navegador. Todos os e
 - [SuperFrete: emissão usando saldo](https://superfrete.readme.io/reference/apiintegrationv1checkout)
 
 - [OWASP: armazenamento de senhas](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)
-- [Cloudflare: suporte a node:crypto](https://developers.cloudflare.com/workers/runtime-apis/nodejs/crypto/)
 
 - [SuperFrete: autenticação](https://superfrete.readme.io/reference/primeiros-passos)
 - [SuperFrete: cotação e valor declarado](https://superfrete.readme.io/reference/cotacao-de-frete)

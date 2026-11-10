@@ -1,29 +1,17 @@
-// Runs the real route/service code against temporary SQLite with all HTTP mocked.
+// Runs the real route/service code (including lib/pg.ts and the Neon driver) against an
+// in-memory Postgres (PGlite) with all HTTP mocked.
 // No production database, customer information, payment, or label is touched.
 import assert from 'node:assert/strict';
-import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { createTestDatabase, neonHttpHandler, isFixtureDatabaseRequest, rows, FIXTURE_DATABASE_URL } from './pglite-neon.mjs';
 
-const sql = new DatabaseSync(':memory:');
-for (const file of (await fs.readdir('drizzle')).filter(f => f.endsWith('.sql')).sort()) sql.exec(await fs.readFile(`drizzle/${file}`, 'utf8'));
-function prepare(query) {
-  let values = [];
-  return {
-    bind(...args) { values = args; return this; },
-    async first() { return sql.prepare(query).get(...values) || null; },
-    async all() { return { results: sql.prepare(query).all(...values) }; },
-    async run() { const r = sql.prepare(query).run(...values); return { meta: { changes: r.changes } }; },
-  };
-}
-globalThis.paymentTestDb = { prepare, async batch(statements) {
-  sql.exec('BEGIN'); try { const rows = []; for (const s of statements) rows.push(await s.run()); sql.exec('COMMIT'); return rows; }
-  catch (error) { sql.exec('ROLLBACK'); throw error; }
-} };
+const pg = await createTestDatabase();
 globalThis.paymentTestAdmin = null;
 Object.assign(process.env, {
+  DATABASE_URL: FIXTURE_DATABASE_URL,
   INFINITEPAY_HANDLE: 'fixture-store', PUBLIC_SITE_URL: 'https://fixture.example',
   SUPERFRETE_TOKEN: 'local-fixture-not-a-token', SUPERFRETE_AUTO_LABEL: 'true', SHIPPING_DOCUMENT: 'declaration',
   ORIGIN_CEP: '02335090', PACKAGE_HEIGHT_CM: '6', PACKAGE_WIDTH_CM: '11', PACKAGE_LENGTH_CM: '16', PACKAGE_WEIGHT_KG: '0.3',
@@ -35,7 +23,7 @@ await build({ stdin: { contents: `export {POST as payment} from './app/api/payme
   plugins: [{ name: 'test-runtime', setup(b) {
     b.onResolve({ filter: /^cloudflare:workers$/ }, () => ({ path: 'cloudflare', namespace: 'fixture' }));
     b.onResolve({ filter: /(?:^|\/)admin-auth$/ }, () => ({ path: 'admin', namespace: 'fixture' }));
-    b.onLoad({ filter: /.*/, namespace: 'fixture' }, a => ({ contents: a.path === 'cloudflare' ? 'export const env={DB:globalThis.paymentTestDb};' : 'export async function getAdmin(){return globalThis.paymentTestAdmin;}' }));
+    b.onLoad({ filter: /.*/, namespace: 'fixture' }, a => ({ contents: a.path === 'cloudflare' ? 'export const env={};' : 'export async function getAdmin(){return globalThis.paymentTestAdmin;}' }));
   } }], logLevel: 'silent' });
 const routes = await import(pathToFileURL(output).href);
 const origin = 'https://fixture.example';
@@ -44,6 +32,7 @@ const calls = { links: 0, cart: 0, purchase: 0, check: 0 };
 let scenario = 'normal';
 const originalFetch = globalThis.fetch;
 globalThis.fetch = async (input, init = {}) => {
+  if (isFixtureDatabaseRequest(new URL(String(input)))) return neonHttpHandler(pg, new Request(String(input), init));
   const url = String(input), body = init.body ? JSON.parse(init.body) : null;
   if (url === 'https://api.checkout.infinitepay.io/links') {
     calls.links++;
@@ -90,36 +79,36 @@ async function pay(action, body, headers = {}) {
 const customer = { name: 'Comprador de Teste', cpf: '52998224725', phone: '11999990000', cep: '01001000', street: 'Praça da Sé', number: '1', complement: '', district: 'Sé', city: 'São Paulo', state: 'SP' };
 async function order(mode = 'shipping') {
   const key = crypto.randomUUID(), quote = crypto.randomUUID(), owner = crypto.randomUUID();
-  sql.prepare('INSERT INTO quotes VALUES (?,?,?,?,?,?,?,?,?,?)').run(quote, owner, customer.cep, 'PAC', 5, 1800, 200, 2400, 10000, Date.now() + 600000);
+  await pg.query('INSERT INTO quotes VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)', [quote, owner, customer.cep, 'PAC', 5, 1800, 200, 2400, 10000, Date.now() + 600000]);
   const res = await routes.order(request('/api/orders', { customer, mode, quoteId: mode === 'shipping' ? quote : undefined, totalCents: 1, status: 'pago_pronto_envio' }, { 'Idempotency-Key': key, Cookie: `pc_quote=${owner}` }));
   assert.equal(res.status, 201); const data = await res.json(); return { id: data.id, key };
 }
-function event(id, method = 'pix', amount = 2400) {
-  const payment = sql.prepare('SELECT * FROM order_payments WHERE order_id=?').get(id);
+async function event(id, method = 'pix', amount = 2400) {
+  const [payment] = await rows(pg, 'SELECT * FROM order_payments WHERE order_id=$1', [id]);
   const e = { order_nsu: payment.reference, invoice_slug: crypto.randomUUID(), transaction_nsu: crypto.randomUUID() };
   checks.set(e.transaction_nsu, { reference: e.order_nsu, slug: e.invoice_slug, amount, method }); return e;
 }
-function status(id) { return sql.prepare('SELECT status FROM orders WHERE id=?').get(id).status; }
-function job(id) { return sql.prepare('SELECT * FROM shipment_jobs WHERE order_id=?').get(id); }
+async function status(id) { return (await rows(pg, 'SELECT status FROM orders WHERE id=$1', [id]))[0].status; }
+async function job(id) { return (await rows(pg, 'SELECT * FROM shipment_jobs WHERE order_id=$1', [id]))[0]; }
 async function retry(id) {
   const res = await routes.staff(request('/api/staff/orders', { id, action: 'retry_label' }));
   assert.equal(res.status, 200);
 }
 try {
-  const vault = await order('vault'); assert.equal((await pay('checkout', vault)).status, 409); assert.equal(job(vault.id), undefined);
+  const vault = await order('vault'); assert.equal((await pay('checkout', vault)).status, 409); assert.equal(await job(vault.id), undefined);
   const first = await order();
   assert.equal((await pay('checkout', first, { Origin: 'https://foreign.example' })).status, 403);
   assert.equal((await pay('checkout', { ...first, key: crypto.randomUUID() })).status, 404);
   const result = await pay('checkout', { ...first, amount: 1, handle: 'attacker' }); assert.equal(result.status, 200);
   assert.equal((await pay('checkout', first)).data.url, result.data.url); assert.equal(calls.links, 1);
-  const proof = event(first.id);
+  const proof = (await event(first.id));
   const forged = { ...proof, transaction_nsu: crypto.randomUUID(), paid: true, amount: 2400 };
-  assert.equal((await pay('webhook', forged)).status, 400); assert.equal(status(first.id), 'aguardando_pagamento'); assert.equal(calls.cart, 0);
-  const short = event(first.id, 'pix', 1); assert.equal((await pay('webhook', short)).status, 400); assert.equal(status(first.id), 'aguardando_pagamento');
+  assert.equal((await pay('webhook', forged)).status, 400); assert.equal(await status(first.id), 'aguardando_pagamento'); assert.equal(calls.cart, 0);
+  const short = (await event(first.id, 'pix', 1)); assert.equal((await pay('webhook', short)).status, 400); assert.equal(await status(first.id), 'aguardando_pagamento');
   process.env.INFINITEPAY_HANDLE = 'changed-store';
   assert.equal((await pay('return', proof)).data.status, 'pago_pronto_envio');
   process.env.INFINITEPAY_HANDLE = 'fixture-store';
-  assert.equal(job(first.id).status, 'issued'); assert.equal(calls.purchase, 1);
+  assert.equal((await job(first.id)).status, 'issued'); assert.equal(calls.purchase, 1);
   const before = { ...calls }; assert.equal((await pay('webhook', proof)).status, 200); assert.deepEqual(calls, before);
   assert.equal((await pay('checkout', first)).data.status, 'pago_pronto_envio'); assert.equal(calls.links, 1);
   assert.equal((await pay('status', { ...first, key: crypto.randomUUID() })).status, 404);
@@ -129,17 +118,17 @@ try {
   const csv = await (await routes.csv()).text(); assert.ok(csv.includes(customer.name)); assert.equal(csv.split(customer.name).length - 1, 1);
   console.log('PASS: server-owned amounts/merchant, access, cofre, checkout reuse, forged events, underpayment, PIX, stored recipient, confirmation, CSV, replay, protected label actions.');
 
-  const card = await order(); await pay('checkout', card); assert.equal((await pay('webhook', event(card.id, 'credit_card'))).status, 200);
-  assert.equal(sql.prepare('SELECT capture_method FROM order_payments WHERE order_id=?').get(card.id).capture_method, 'credit_card');
+  const card = await order(); await pay('checkout', card); assert.equal((await pay('webhook', (await event(card.id, 'credit_card')))).status, 200);
+  assert.equal((await rows(pg, 'SELECT capture_method FROM order_payments WHERE order_id=$1', [card.id]))[0].capture_method, 'credit_card');
   scenario = 'higher-price'; const high = await order(); await pay('checkout', high); let purchases = calls.purchase;
-  await pay('webhook', event(high.id)); assert.equal(status(high.id), 'pago_pronto_envio'); assert.equal(job(high.id).status, 'attention'); assert.equal(calls.purchase, purchases);
-  scenario = 'no-balance'; const low = await order(); await pay('checkout', low); await pay('webhook', event(low.id)); assert.equal(job(low.id).status, 'attention');
-  const carts = calls.cart; scenario = 'normal'; await retry(low.id); assert.equal(job(low.id).status, 'issued'); assert.equal(calls.cart, carts);
-  scenario = 'uncertain-purchase'; const uncertain = await order(); await pay('checkout', uncertain); const uncertainEvent = event(uncertain.id); await pay('webhook', uncertainEvent);
-  assert.equal(job(uncertain.id).status, 'attention'); purchases = calls.purchase; scenario = 'normal'; await retry(uncertain.id);
-  assert.equal(job(uncertain.id).status, 'issued'); assert.equal(calls.purchase, purchases);
-  scenario = 'uncertain-cart'; const lost = await order(); await pay('checkout', lost); const lostEvent = event(lost.id); await pay('webhook', lostEvent);
-  const cartCount = calls.cart; assert.equal(job(lost.id).status, 'attention'); scenario = 'normal'; await pay('webhook', lostEvent); await retry(lost.id); assert.equal(calls.cart, cartCount);
+  await pay('webhook', (await event(high.id))); assert.equal(await status(high.id), 'pago_pronto_envio'); assert.equal((await job(high.id)).status, 'attention'); assert.equal(calls.purchase, purchases);
+  scenario = 'no-balance'; const low = await order(); await pay('checkout', low); await pay('webhook', (await event(low.id))); assert.equal((await job(low.id)).status, 'attention');
+  const carts = calls.cart; scenario = 'normal'; await retry(low.id); assert.equal((await job(low.id)).status, 'issued'); assert.equal(calls.cart, carts);
+  scenario = 'uncertain-purchase'; const uncertain = await order(); await pay('checkout', uncertain); const uncertainEvent = (await event(uncertain.id)); await pay('webhook', uncertainEvent);
+  assert.equal((await job(uncertain.id)).status, 'attention'); purchases = calls.purchase; scenario = 'normal'; await retry(uncertain.id);
+  assert.equal((await job(uncertain.id)).status, 'issued'); assert.equal(calls.purchase, purchases);
+  scenario = 'uncertain-cart'; const lost = await order(); await pay('checkout', lost); const lostEvent = (await event(lost.id)); await pay('webhook', lostEvent);
+  const cartCount = calls.cart; assert.equal((await job(lost.id)).status, 'attention'); scenario = 'normal'; await pay('webhook', lostEvent); await retry(lost.id); assert.equal(calls.cart, cartCount);
   assert.equal((await pay('webhook', { ...proof, order_nsu: crypto.randomUUID() })).status, 400);
   console.log('PASS: cartão, content declaration, label price cap, insufficient balance, retry without duplicate cart, ambiguous purchase reconciliation, ambiguous cart blocks re-creation.');
-} finally { globalThis.fetch = originalFetch; sql.close(); await fs.rm(output, { force: true }); }
+} finally { globalThis.fetch = originalFetch; await pg.close(); await fs.rm(output, { force: true }); }

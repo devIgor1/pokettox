@@ -15,7 +15,7 @@ function strictOrigin(req: Request) {
 async function accountLimit(email: string, action: string) {
   const window = Math.floor(Date.now() / 900000);
   const key = tokenHash(`admin:${action}:${email}:${window}`);
-  const row = await db().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count")
+  const row = await db().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=request_limits.count+1 RETURNING count")
     .bind(key, (window + 1) * 900000).first<{ count: number }>();
   if (row && row.count > 10) throw new AppError("Muitas tentativas. Aguarde 15 minutos e tente novamente.", 429);
 }
@@ -48,7 +48,7 @@ export async function POST(req: Request, context: Context) {
       if (await db().prepare("SELECT id FROM admin_accounts WHERE id='primary-admin'").first()) throw new AppError("O administrador já foi cadastrado. Use a tela de login.", 409);
       const passwordHash = await hashPassword(input.password), recoveryCode = randomToken();
       // The fixed primary key makes concurrent redemption of the invite atomic.
-      const result = await db().prepare("INSERT OR IGNORE INTO admin_accounts (id,email,password_hash,recovery_hash,active,version,created_at) VALUES ('primary-admin',?,?,?,1,1,?)")
+      const result = await db().prepare("INSERT INTO admin_accounts (id,email,password_hash,recovery_hash,active,version,created_at) VALUES ('primary-admin',?,?,?,1,1,?) ON CONFLICT DO NOTHING")
         .bind(input.email, passwordHash, tokenHash(recoveryCode), Date.now()).run();
       if (result.meta.changes !== 1) throw new AppError("Este convite já foi utilizado. Use a tela de login.", 409);
       return await signedIn(req, { id: "primary-admin", email: input.email, version: 1 }, { recoveryCode });

@@ -1,19 +1,23 @@
 // Local-only integration check. Never targets the hosted site. Fixtures are removed by exact IDs.
 import assert from 'node:assert/strict';
-import {spawnSync} from 'node:child_process';
+import {neon} from '@neondatabase/serverless';
 import {hashPassword} from '../lib/password.ts';
-const origin='http://localhost:5173';
+const origin='http://localhost:3000';
 const customer={name:'QA local — teste automatizado',cpf:'52998224725',phone:'11999990000',cep:'01001000',street:'Praça da Sé',number:'1',complement:'',district:'Sé',city:'São Paulo',state:'SP'};
 const keys=[],quoteIds=[],created=[];
 const owner=crypto.randomUUID();
 const adminId=`qa-ops-${crypto.randomUUID()}`,adminEmail=`${adminId}@example.test`,adminPassword='Senha exclusiva do teste de pedidos!';
-function sql(statement){const result=spawnSync(process.execPath,['--import','./scripts/sites-env.mjs','./node_modules/wrangler/bin/wrangler.js','d1','execute','DB','--local','--config','dist/server/wrangler.json','--persist-to','.wrangler/state','--command',statement],{encoding:'utf8'});if(result.status!==0)throw new Error(result.stderr);}
+// Same database the local dev server uses (.env.local → Neon branch "dev"). Never production.
+process.loadEnvFile('.env.local');
+if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL ausente em .env.local');
+const db = neon(process.env.DATABASE_URL);
+const sql = (statement, params = []) => db.query(statement, params);
 async function post(path,body,extra={}){const res=await fetch(origin+path,{method:'POST',headers:{'Content-Type':'application/json',Origin:origin,...extra},body:JSON.stringify(body)});return {status:res.status,data:await res.json()};}
 try {
   assert.equal((await fetch(origin+'/api/staff/orders')).status,401);
   assert.equal((await fetch(origin+'/api/staff/spreadsheet')).status,401);
   const passwordHash=await hashPassword(adminPassword);
-  sql(`INSERT INTO admin_accounts (id,email,password_hash,recovery_hash,active,version,created_at) VALUES ('${adminId}','${adminEmail}','${passwordHash}','fixture-unused',1,1,${Date.now()})`);
+  await sql('INSERT INTO admin_accounts (id,email,password_hash,recovery_hash,active,version,created_at) VALUES ($1,$2,$3,$4,1,1,$5)',[adminId,adminEmail,passwordHash,'fixture-unused',Date.now()]);
   const signin=await fetch(origin+'/api/admin/login',{method:'POST',headers:{'Content-Type':'application/json',Origin:origin},body:JSON.stringify({email:adminEmail,password:adminPassword})});
   assert.equal(signin.status,200);
   const auth=signin.headers.getSetCookie().map(c=>c.split(';')[0]).join('; ');
@@ -25,9 +29,9 @@ try {
   const repeat=await post('/api/orders',{customer,mode:'vault'},{'Idempotency-Key':key});assert.equal(repeat.data.id,vault.data.id);
   const changed=await post('/api/orders',{customer:{...customer,name:'Outro QA'},mode:'vault'},{'Idempotency-Key':key});assert.equal(changed.status,409);
   assert.equal((await post('/api/staff/orders',{id:vault.data.id,action:'confirm_payment'},{Cookie:auth})).status,409);
-  const expired=crypto.randomUUID();quoteIds.push(expired);sql(`INSERT INTO quotes VALUES ('${expired}','${owner}','01001000','PAC',5,1800,200,2400,10000,${Date.now()-1000})`);
+  const expired=crypto.randomUUID();quoteIds.push(expired);await sql("INSERT INTO quotes VALUES ($1,$2,'01001000','PAC',5,1800,200,2400,10000,$3)",[expired,owner,Date.now()-1000]);
   const exp=await post('/api/orders',{customer,mode:'shipping',quoteId:expired},{Cookie:`pc_quote=${owner}`,'Idempotency-Key':crypto.randomUUID()});assert.equal(exp.status,409);
-  const quote=crypto.randomUUID();quoteIds.push(quote);sql(`INSERT INTO quotes VALUES ('${quote}','${owner}','01001000','PAC',5,1800,200,2400,10000,${Date.now()+600000})`);
+  const quote=crypto.randomUUID();quoteIds.push(quote);await sql("INSERT INTO quotes VALUES ($1,$2,'01001000','PAC',5,1800,200,2400,10000,$3)",[quote,owner,Date.now()+600000]);
   const foreign=await post('/api/orders',{customer,mode:'shipping',quoteId:quote},{Cookie:`pc_quote=${crypto.randomUUID()}`,'Idempotency-Key':crypto.randomUUID()});assert.equal(foreign.status,409);
   const shipKey=crypto.randomUUID();keys.push(shipKey);
   const ship=await post('/api/orders',{customer,mode:'shipping',quoteId:quote,totalCents:1,status:'pago_pronto_envio'},{Cookie:`pc_quote=${owner}`,'Idempotency-Key':shipKey});assert.equal(ship.status,201,JSON.stringify(ship));created.push(ship.data.id);assert.equal(ship.data.status,'aguardando_pagamento');
@@ -40,7 +44,7 @@ try {
   const noToken=await post('/api/quotes',{cep:'01001000',declaredValue:100});assert.equal(noToken.status,503);assert.ok(!noToken.data.quotes);
   console.log('PASS: acesso da equipe, CPF inválido, cofre, persistência, idempotência, cotação expirada/alheia, preço e status protegidos, confirmação manual, planilha só de pagos, ausência de token.');
 }finally{
-  for(const key of keys)sql(`DELETE FROM orders WHERE idempotency_key='${key}' AND json_extract(customer,'$.name')='QA local — teste automatizado'`);
-  for(const id of quoteIds)sql(`DELETE FROM quotes WHERE id='${id}' AND owner='${owner}'`);
-  sql(`DELETE FROM admin_sessions WHERE admin_id='${adminId}'; DELETE FROM admin_accounts WHERE id='${adminId}' AND email='${adminEmail}';`);
+  for(const key of keys){await sql('DELETE FROM order_payments WHERE order_id IN (SELECT id FROM orders WHERE idempotency_key=$1)',[key]);await sql('DELETE FROM shipment_jobs WHERE order_id IN (SELECT id FROM orders WHERE idempotency_key=$1)',[key]);await sql("DELETE FROM orders WHERE idempotency_key=$1 AND customer::json->>'name'='QA local — teste automatizado'",[key]);}
+  for(const id of quoteIds)await sql('DELETE FROM quotes WHERE id=$1 AND owner=$2',[id,owner]);
+  await sql('DELETE FROM admin_sessions WHERE admin_id=$1',[adminId]);await sql('DELETE FROM admin_accounts WHERE id=$1 AND email=$2',[adminId,adminEmail]);
 }

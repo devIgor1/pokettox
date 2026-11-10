@@ -1,0 +1,10 @@
+# Nunca enviar segredos locais nem artefatos de build; a Vercel usa as variáveis do projeto.
+.env*
+.dev.vars*
+.next
+node_modules
+.wrangler
+.vinext
+.sites-runtime
+dist
+*.tsbuildinfo

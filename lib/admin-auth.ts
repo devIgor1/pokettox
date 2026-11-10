@@ -1,14 +1,15 @@
-import { env } from "cloudflare:workers";
 import { cookies } from "next/headers";
 import { randomToken, tokenHash, validToken } from "./password";
+import { database } from "./pg";
 
 export type Admin = { id: string; email: string; version: number };
 export const SESSION_SECONDS = 8 * 60 * 60;
 const secureCookie = "__Host-pc_staff";
 const localCookie = "pc_staff_local";
 function authDb() {
-  if (!env.DB) throw new Error("Authentication storage unavailable");
-  return env.DB;
+  const client = database();
+  if (!client) throw new Error("Authentication storage unavailable");
+  return client;
 }
 export function sessionCookie(req: Request, token: string, maxAge = SESSION_SECONDS) {
   const secure = new URL(req.url).protocol === "https:";
@@ -21,8 +22,9 @@ export async function currentSessionToken() {
 }
 export async function getAdmin(): Promise<Admin | null> {
   const token = await currentSessionToken();
-  if (!token || !validToken(token) || !env.DB) return null;
-  return env.DB.prepare(`SELECT a.id, a.email, a.version FROM admin_sessions s
+  const client = database();
+  if (!token || !validToken(token) || !client) return null;
+  return client.prepare(`SELECT a.id, a.email, a.version FROM admin_sessions s
     JOIN admin_accounts a ON a.id=s.admin_id AND a.version=s.version
     WHERE s.token_hash=? AND s.expires_at>? AND a.active=1`)
     .bind(tokenHash(token), Date.now()).first<Admin>();

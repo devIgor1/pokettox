@@ -1,9 +1,9 @@
-import { env } from "cloudflare:workers";
 import { getAdmin } from "./admin-auth";
+import { database } from "./pg";
 import { z } from "zod";
 import { digits, validCpf } from "./domain";
 export class AppError extends Error { constructor(message:string, public status=400){ super(message); } }
-export function db() { if(!env.DB) throw new AppError("O registro está temporariamente indisponível. Tente novamente.",503); return env.DB; }
+export function db() { const client=database(); if(!client) throw new AppError("O registro está temporariamente indisponível. Tente novamente.",503); return client; }
 export function setting(name:string) { return process.env[name]?.trim() || ""; }
 export function shippingConfig() {
   const token=setting("SUPERFRETE_TOKEN"), origin=digits(setting("ORIGIN_CEP")), contact=setting("SUPERFRETE_CONTACT_EMAIL");
@@ -35,9 +35,9 @@ export async function readBody(req:Request) {
 }
 export async function hash(input:string) { return Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256",new TextEncoder().encode(input)))).map(v=>v.toString(16).padStart(2,"0")).join(""); }
 export async function limit(req:Request, action:string, max:number) {
-  const window=Math.floor(Date.now()/900000), identity=req.headers.get("cf-connecting-ip") || req.headers.get("oai-authenticated-user-id") || "local";
+  const window=Math.floor(Date.now()/900000), identity=req.headers.get("x-real-ip") || req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "local";
   const key=await hash(`${identity}:${action}:${window}`);
-  const row=await db().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=count+1 RETURNING count").bind(key,(window+1)*900000).first<{count:number}>();
+  const row=await db().prepare("INSERT INTO request_limits (key,count,expires_at) VALUES (?,1,?) ON CONFLICT(key) DO UPDATE SET count=request_limits.count+1 RETURNING count").bind(key,(window+1)*900000).first<{count:number}>();
   if(row && row.count>max) throw new AppError("Muitas tentativas. Aguarde alguns minutos antes de tentar novamente.",429);
   await db().prepare("DELETE FROM request_limits WHERE expires_at < ?").bind(Date.now()-86400000).run();
 }
